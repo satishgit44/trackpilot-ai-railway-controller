@@ -1,0 +1,387 @@
+# TrackPilot .gitignore
+
+# ===================
+# Environment & Config
+# ===================
+.env
+.env.local
+.env.production
+.env.development
+config.json
+secrets.yaml
+*.secret
+
+# ===================
+# Build Artifacts
+# ===================
+# C++ Build
+build/
+cmake-build-*/
+*.cmake
+CMakeCache.txt
+CMakeFiles/
+Makefile
+*.make
+compile_commands.json
+
+# Compiled binaries
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.out
+
+# Python Build
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Node.js Build
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+dist/
+.next/
+.nuxt/
+.cache/
+.parcel-cache/
+
+# ===================
+# Development Tools
+# ===================
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Editor temp files
+*.tmp
+*.bak
+*.orig
+.#*
+#*#
+
+# ===================
+# Logs & Monitoring
+# ===================
+logs/
+*.log
+log/
+*.log.*
+*.log.gz
+
+# Application logs  
+trackpilot.log
+core.log
+training.log
+override.log
+
+# Monitoring data
+prometheus_data/
+grafana_data/
+jaeger_data/
+
+# ===================
+# Data & Models
+# ===================
+# AI Models
+models/
+*.pt
+*.pth
+*.onnx
+*.pb
+*.h5
+*.pkl
+*.pickle
+checkpoints/
+
+# Training Data
+data/training/
+data/override_logs/
+data/raw/
+data/processed/
+data/exports/
+*.csv
+*.json.gz
+*.parquet
+
+# Datasets
+datasets/
+*.hdf5
+*.npz
+
+# ===================
+# Temporary Files
+# ===================
+tmp/
+temp/
+*.tmp
+*.temp
+.cache/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# OS temp files
+.Trash-*
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
+
+# ===================
+# Dependencies & Packages
+# ===================
+# Python
+.tox/
+.coverage
+.pytest_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.venv/
+venv/
+ENV/
+env/
+.env/
+
+# Node.js
+node_modules/
+jspm_packages/
+.npm
+.eslintcache
+
+# C++ Dependencies
+vcpkg_installed/
+conan/
+third_party/
+
+# ===================
+# Docker & Container
+# ===================
+# Docker build context exclusions are in .dockerignore
+docker-compose.override.yml
+.docker/
+
+# Container data
+postgres-data/
+redis-data/
+rabbitmq-data/
+grafana-data/
+prometheus-data/
+
+# ===================
+# CI/CD & Deploy
+# ===================
+.github/workflows/*.secret
+deployment-config.yaml
+k8s/secrets/
+helm/values-*.yaml
+terraform.tfstate*
+.terraform/
+*.tfvars
+
+# Cloud configs
+gcloud-key.json
+aws-config.json
+azure-credentials.json
+
+# ===================
+# Documentation
+# ===================
+# Generated docs
+docs/_build/
+docs/site/
+.sphinx/
+doc/html/
+doc/latex/
+doxygen/
+
+# User-specific docs
+NOTES.md
+TODO.md
+SCRATCH.md
+
+# ===================
+# Testing & Coverage
+# ===================
+# Test outputs
+test-results/
+test-reports/
+.pytest_cache/
+.coverage
+coverage/
+lcov.info
+*.gcov
+*.gcda
+*.gcno
+
+# Benchmark results
+benchmark-results/
+perf.data*
+callgrind.out.*
+
+# ===================
+# Machine Learning Specific
+# ===================
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# MLflow
+mlruns/
+mlartifacts/
+
+# Weights & Biases
+wandb/
+
+# TensorBoard
+runs/
+tensorboard_logs/
+
+# PyTorch Lightning
+lightning_logs/
+
+# ===================
+# Database & Cache
+# ===================
+# SQLite
+*.db
+*.sqlite
+*.sqlite3
+
+# Database dumps
+*.sql.gz
+*.dump
+
+# Cache files
+.cache/
+*.cache
+redis.rdb
+
+# ===================
+# Security & Certificates
+# ===================
+# SSL Certificates
+*.crt
+*.key
+*.pem
+*.p12
+*.pfx
+
+# SSH Keys
+id_rsa*
+id_ed25519*
+known_hosts
+authorized_keys
+
+# API Keys & Tokens
+.secrets
+*.token
+.credentials
+
+# ===================
+# Performance & Profiling
+# ===================
+# Profiling data
+*.prof
+*.profile
+pprof/
+*.memprof
+heapdump.*
+
+# Flamegraph data
+*.svg
+flamegraph*.txt
+
+# ===================
+# Backup & Archives
+# ===================
+# Backup files
+*.backup
+*.bak
+*.old
+backup/
+backups/
+
+# Archives
+*.tar
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.zip
+*.rar
+*.7z
+
+# ===================
+# OS & Hardware Specific
+# ===================
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+
+# ===================
+# Custom Exclusions
+# ===================
+# Project-specific temp
+scratch/
+experiments/
+research/
+legacy/
+
+# Generated sample data
+sample_data/
+demo_data/
+mock_data/
+
+# Local development overrides
+local.json
+local.yaml
+dev-override.*

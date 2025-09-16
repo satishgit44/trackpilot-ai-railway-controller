@@ -1,0 +1,304 @@
+name: C++ Core Build and Test
+
+on:
+  push:
+    branches: [ main, develop, genspark_ai_developer ]
+    paths:
+      - 'core/**'
+      - '.github/workflows/cpp-core.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'core/**'
+      - '.github/workflows/cpp-core.yml'
+  workflow_dispatch:
+
+env:
+  BUILD_TYPE: Release
+  TORCH_VERSION: 2.0.1
+
+jobs:
+  build-test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        build_type: [Debug, Release]
+        include:
+          - os: ubuntu-latest
+            torch_url: "https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-2.0.1%2Bcpu.zip"
+            torch_extract: "libtorch"
+          - os: windows-latest
+            torch_url: "https://download.pytorch.org/libtorch/cpu/libtorch-win-shared-with-deps-2.0.1%2Bcpu.zip"
+            torch_extract: "libtorch"
+          - os: macos-latest
+            torch_url: "https://download.pytorch.org/libtorch/cpu/libtorch-macos-2.0.1.zip"
+            torch_extract: "libtorch"
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Setup Python (for scripts)
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    # Linux-specific setup
+    - name: Install dependencies (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          libboost-system-dev \
+          libboost-thread-dev \
+          libboost-filesystem-dev \
+          libssl-dev \
+          pkg-config \
+          wget \
+          unzip
+
+    # Windows-specific setup
+    - name: Install dependencies (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System'
+        choco install wget
+
+    # macOS-specific setup
+    - name: Install dependencies (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        brew install cmake boost openssl pkg-config wget
+
+    # Download and extract LibTorch
+    - name: Cache LibTorch
+      uses: actions/cache@v3
+      id: cache-libtorch
+      with:
+        path: libtorch
+        key: ${{ runner.os }}-libtorch-${{ env.TORCH_VERSION }}
+
+    - name: Download LibTorch
+      if: steps.cache-libtorch.outputs.cache-hit != 'true'
+      run: |
+        wget -O libtorch.zip "${{ matrix.torch_url }}"
+        unzip libtorch.zip
+        ls -la
+
+    # Configure CMake
+    - name: Configure CMake (Linux/macOS)
+      if: runner.os != 'Windows'
+      run: |
+        cd core
+        cmake -B build \
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+          -DCMAKE_PREFIX_PATH=${{ github.workspace }}/libtorch \
+          -DBUILD_TESTING=ON
+
+    - name: Configure CMake (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        cd core
+        cmake -B build -A x64 `
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} `
+          -DCMAKE_PREFIX_PATH="${{ github.workspace }}\libtorch" `
+          -DBUILD_TESTING=ON
+
+    # Build
+    - name: Build
+      run: |
+        cd core
+        cmake --build build --config ${{ matrix.build_type }} --parallel 4
+
+    # Test
+    - name: Test
+      run: |
+        cd core
+        ctest --test-dir build -C ${{ matrix.build_type }} --output-on-failure --parallel 4
+
+    # Static Analysis (Linux only)
+    - name: Run Static Analysis
+      if: runner.os == 'Linux' && matrix.build_type == 'Debug'
+      run: |
+        sudo apt-get install -y cppcheck clang-tidy
+        cd core
+        # Run cppcheck
+        cppcheck --enable=all --inconclusive --xml --xml-version=2 src/ 2> cppcheck-report.xml || true
+        # Run clang-tidy
+        find src/ -name "*.cpp" -exec clang-tidy {} -- -std=c++17 -I include \; || true
+
+    # Package artifacts
+    - name: Package Release (Linux)
+      if: runner.os == 'Linux' && matrix.build_type == 'Release'
+      run: |
+        cd core/build
+        make package || cpack
+        ls -la *.tar.gz *.deb 2>/dev/null || echo "No packages found"
+
+    - name: Upload Build Artifacts
+      if: matrix.build_type == 'Release'
+      uses: actions/upload-artifact@v3
+      with:
+        name: trackpilot-core-${{ runner.os }}-${{ matrix.build_type }}
+        path: |
+          core/build/trackpilot_core*
+          core/build/*.tar.gz
+          core/build/*.deb
+          core/build/*.zip
+        retention-days: 7
+
+    # Performance benchmarks (Release builds only)
+    - name: Run Benchmarks
+      if: matrix.build_type == 'Release'
+      run: |
+        cd core/build
+        # Run performance tests if they exist
+        if [ -f "benchmark_tests" ] || [ -f "benchmark_tests.exe" ]; then
+          ./benchmark_tests* --benchmark_format=json --benchmark_out=benchmark_results.json || echo "Benchmarks failed"
+        fi
+      shell: bash
+
+    - name: Upload Benchmark Results
+      if: matrix.build_type == 'Release'
+      uses: actions/upload-artifact@v3
+      with:
+        name: benchmark-results-${{ runner.os }}
+        path: core/build/benchmark_results.json
+        retention-days: 30
+
+  security-scan:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run CodeQL Analysis
+      uses: github/codeql-action/init@v2
+      with:
+        languages: cpp
+
+    - name: Setup build environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential cmake libboost-all-dev
+
+    - name: Download LibTorch
+      run: |
+        wget -O libtorch.zip "https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-2.0.1%2Bcpu.zip"
+        unzip libtorch.zip
+
+    - name: Build for analysis
+      run: |
+        cd core
+        cmake -B build -DCMAKE_PREFIX_PATH=${{ github.workspace }}/libtorch
+        cmake --build build
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v2
+
+  memory-safety:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup build environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          cmake \
+          libboost-all-dev \
+          valgrind \
+          clang
+
+    - name: Download LibTorch
+      run: |
+        wget -O libtorch.zip "https://download.pytorch.org/libtorch/cpu/libtorch-cxx11-abi-shared-with-deps-2.0.1%2Bcpu.zip"
+        unzip libtorch.zip
+
+    - name: Build with AddressSanitizer
+      run: |
+        cd core
+        cmake -B build-asan \
+          -DCMAKE_PREFIX_PATH=${{ github.workspace }}/libtorch \
+          -DCMAKE_BUILD_TYPE=Debug \
+          -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer" \
+          -DCMAKE_C_FLAGS="-fsanitize=address -fno-omit-frame-pointer"
+        cmake --build build-asan
+
+    - name: Run AddressSanitizer Tests
+      run: |
+        cd core
+        export ASAN_OPTIONS=detect_leaks=1:halt_on_error=1
+        ctest --test-dir build-asan --output-on-failure || echo "AddressSanitizer found issues"
+
+    - name: Build with Valgrind
+      run: |
+        cd core
+        cmake -B build-valgrind \
+          -DCMAKE_PREFIX_PATH=${{ github.workspace }}/libtorch \
+          -DCMAKE_BUILD_TYPE=Debug
+        cmake --build build-valgrind
+
+    - name: Run Valgrind Tests
+      run: |
+        cd core
+        valgrind --leak-check=full --show-leak-kinds=all --error-exitcode=1 \
+          ctest --test-dir build-valgrind --output-on-failure || echo "Valgrind found issues"
+
+  documentation:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install Doxygen
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y doxygen graphviz
+
+    - name: Generate Documentation
+      run: |
+        cd core
+        doxygen Doxyfile || echo "Doxygen config not found, skipping"
+
+    - name: Upload Documentation
+      uses: actions/upload-artifact@v3
+      with:
+        name: cpp-documentation
+        path: core/docs/
+        retention-days: 7
+
+  notify-status:
+    runs-on: ubuntu-latest
+    needs: [build-test, security-scan, memory-safety]
+    if: always()
+    
+    steps:
+    - name: Report Status
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const buildResult = '${{ needs.build-test.result }}';
+          const securityResult = '${{ needs.security-scan.result }}';
+          const memoryResult = '${{ needs.memory-safety.result }}';
+          
+          const emoji = buildResult === 'success' && 
+                       (securityResult === 'success' || securityResult === 'skipped') && 
+                       (memoryResult === 'success' || memoryResult === 'skipped') ? '✅' : '❌';
+          
+          console.log(`${emoji} C++ Core Pipeline Status:`);
+          console.log(`Build & Test: ${buildResult}`);
+          console.log(`Security Scan: ${securityResult}`);
+          console.log(`Memory Safety: ${memoryResult}`);

@@ -1,0 +1,369 @@
+# TrackPilot AI Railway Controller - Docker Compose Configuration
+# This file defines the complete application stack for development and production
+
+version: '3.8'
+
+services:
+  # =================
+  # Core Application Stack
+  # =================
+  
+  trackpilot-core:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+      target: runtime
+      args:
+        BUILD_VERSION: ${BUILD_VERSION:-1.0.0}
+        BUILD_DATE: ${BUILD_DATE:-}
+        VCS_REF: ${VCS_REF:-}
+    image: trackpilot/core:${TAG:-latest}
+    container_name: trackpilot-core
+    hostname: trackpilot-core
+    restart: unless-stopped
+    
+    # Port mappings
+    ports:
+      - "${CORE_HTTP_PORT:-8080}:8080"
+      - "${WEB_PORT:-3000}:80"
+    
+    # Environment variables
+    environment:
+      - NODE_ENV=${NODE_ENV:-production}
+      - CORE_LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - CORE_MODEL_PATH=/app/models/current_model.pt
+      - CORE_CONFIG_PATH=/app/config/config.json
+      - POSTGRES_URL=postgresql://trackpilot:${DB_PASSWORD:-trackpilot123}@postgres:5432/trackpilot
+      - REDIS_URL=redis://redis:6379
+      - PROMETHEUS_ENABLED=${MONITORING_ENABLED:-true}
+      - JAEGER_ENDPOINT=http://jaeger:14268/api/traces
+    
+    # Volumes
+    volumes:
+      - trackpilot-logs:/app/logs
+      - trackpilot-models:/app/models
+      - trackpilot-data:/app/data
+      - ./config/production.json:/app/config/config.json:ro
+    
+    # Dependencies
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "/app/healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "1.0"
+        reservations:
+          memory: 1G
+          cpus: "0.5"
+    
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # =================
+  # Database Services
+  # =================
+  
+  postgres:
+    image: postgres:15-alpine
+    container_name: trackpilot-postgres
+    hostname: postgres
+    restart: unless-stopped
+    
+    environment:
+      - POSTGRES_DB=trackpilot
+      - POSTGRES_USER=trackpilot
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-trackpilot123}
+      - POSTGRES_INITDB_ARGS=--encoding=UTF8 --lc-collate=C --lc-ctype=C
+    
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - ./scripts/create-tables.sql:/docker-entrypoint-initdb.d/02-tables.sql:ro
+    
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trackpilot -d trackpilot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+
+  redis:
+    image: redis:7-alpine
+    container_name: trackpilot-redis
+    hostname: redis
+    restart: unless-stopped
+    
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis123}
+    
+    volumes:
+      - redis-data:/data
+      - ./config/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.2"
+
+  # =================
+  # AI Training Service (Optional)
+  # =================
+  
+  ai-trainer:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile
+      target: python-builder
+    image: trackpilot/trainer:${TAG:-latest}
+    container_name: trackpilot-trainer
+    hostname: ai-trainer
+    restart: "no"  # Manual start for training jobs
+    
+    environment:
+      - PYTHONPATH=/src/python
+      - TRAINING_DATA_PATH=/app/data/training
+      - MODEL_OUTPUT_PATH=/app/models
+      - POSTGRES_URL=postgresql://trackpilot:${DB_PASSWORD:-trackpilot123}@postgres:5432/trackpilot
+      - WANDB_API_KEY=${WANDB_API_KEY:-}
+      - CUDA_VISIBLE_DEVICES=${CUDA_DEVICES:-}
+    
+    volumes:
+      - trackpilot-data:/app/data
+      - trackpilot-models:/app/models
+      - ./config/training.json:/app/config/training.json:ro
+    
+    depends_on:
+      - postgres
+    
+    # GPU support (uncomment if available)
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+  # =================
+  # Monitoring Stack
+  # =================
+  
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: trackpilot-prometheus
+    hostname: prometheus
+    restart: unless-stopped
+    
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    
+    volumes:
+      - prometheus-data:/prometheus
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    
+    profiles:
+      - monitoring
+    
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "0.5"
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: trackpilot-grafana
+    hostname: grafana
+    restart: unless-stopped
+    
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin123}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel,grafana-worldmap-panel
+    
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    
+    depends_on:
+      - prometheus
+    
+    profiles:
+      - monitoring
+    
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.3"
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: trackpilot-jaeger
+    hostname: jaeger
+    restart: unless-stopped
+    
+    environment:
+      - COLLECTOR_ZIPKIN_HOST_PORT=:9411
+    
+    ports:
+      - "${JAEGER_UI_PORT:-16686}:16686"
+      - "${JAEGER_COLLECTOR_PORT:-14268}:14268"
+    
+    profiles:
+      - monitoring
+    
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.3"
+
+  # =================
+  # Message Queue (Optional)
+  # =================
+  
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: trackpilot-rabbitmq
+    hostname: rabbitmq
+    restart: unless-stopped
+    
+    environment:
+      - RABBITMQ_DEFAULT_USER=trackpilot
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD:-rabbitmq123}
+    
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    
+    profiles:
+      - messaging
+    
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 30s
+      timeout: 30s
+      retries: 3
+    
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.3"
+
+  # =================
+  # Load Balancer / Reverse Proxy
+  # =================
+  
+  nginx:
+    image: nginx:alpine
+    container_name: trackpilot-nginx
+    hostname: nginx
+    restart: unless-stopped
+    
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - nginx-logs:/var/log/nginx
+    
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    
+    depends_on:
+      - trackpilot-core
+    
+    profiles:
+      - production
+    
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+# =================
+# Named Volumes
+# =================
+volumes:
+  trackpilot-logs:
+    driver: local
+  trackpilot-models:
+    driver: local
+  trackpilot-data:
+    driver: local
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+  rabbitmq-data:
+    driver: local
+  nginx-logs:
+    driver: local
+
+# =================
+# Networks
+# =================
+networks:
+  default:
+    name: trackpilot-network
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
